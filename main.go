@@ -40,10 +40,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	rxgo.Timer(rxgo.WithDuration(1 * time.Second)).DoOnNext(func(i interface{}) {
-		fmt.Println("---- Timer called")
-	})
-
 	eventChan := make(chan rxgo.Item)
 
 	// run informer to get events
@@ -143,10 +139,7 @@ func main() {
 	subscription := observable.Observe()
 
 	go func() {
-		// fmt.Println("subscription go routine called")
 		for item := range subscription {
-			// fmt.Println("Received item in subscription")
-
 			if item.Error() {
 				fmt.Println("Error:", item.E)
 			} else {
@@ -186,7 +179,6 @@ func sortingFunction(a, b corev1.Event) bool {
 
 func processEvent(event corev1.Event) {
 	// Your event processing logic
-
 	fmt.Println("------- Processing event:", event)
 }
 
