@@ -1,0 +1,13 @@
+{
+  "emeraldwalk.runonsave": {
+    "commands": [
+      {
+        "match": "\\.go$",
+        "cmd": "gofmt -w ${file}"
+      }
+    ]
+  },
+  "go.toolsEnvVars": {
+    "GO111MODULE": "on"
+  }
+}
