@@ -17,6 +17,9 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+
+	// call SetEvent from cache package, rename the packege to internal/cache
+	internalcache "eri.io/event-queue/cache"
 )
 
 func main() {
@@ -31,6 +34,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	internalcache.StartCacheMonitor(10 * time.Second)
 
 	// Set up event channel and informer
 	eventChan := make(chan rxgo.Item)
@@ -59,7 +64,7 @@ func setupInformer(clientset *kubernetes.Clientset, eventChan chan rxgo.Item) {
 	eventInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj interface{}) { handleAddEvent(obj, eventChan) },
 		UpdateFunc: func(oldObj, newObj interface{}) { handleUpdateEvent(oldObj, newObj, eventChan) },
-		DeleteFunc: func(obj interface{}) { /* Optionally handle delete events here */ },
+		DeleteFunc: func(obj interface{}) { handleDeleteEvent(obj) },
 	})
 
 	go eventInformer.Run(make(chan struct{}))
@@ -70,18 +75,26 @@ func setupInformer(clientset *kubernetes.Clientset, eventChan chan rxgo.Item) {
 	}
 }
 
+func handleDeleteEvent(obj interface{}) {
+	internalcache.RemoveEvent(getCacheKey(*obj.(*corev1.Event)))
+	printEventDetails("Del", obj.(*corev1.Event))
+}
+
 func handleAddEvent(obj interface{}, eventChan chan rxgo.Item) {
+	internalcache.SetEvent(getCacheKey(*obj.(*corev1.Event)), obj.(*corev1.Event))
 	eventChan <- rxgo.Of(obj)
 	printEventDetails("New", obj.(*corev1.Event))
 }
 
 func handleUpdateEvent(oldObj, newObj interface{}, eventChan chan rxgo.Item) {
+	internalcache.SetEvent(getCacheKey(*newObj.(*corev1.Event)), newObj.(*corev1.Event))
 	eventChan <- rxgo.Of(newObj)
-	printEventDetails("Updated", newObj.(*corev1.Event), oldObj.(*corev1.Event))
+	printEventDetails("Upd", newObj.(*corev1.Event), oldObj.(*corev1.Event))
+
 }
 
 func printEventDetails(eventType string, newEvent *corev1.Event, oldEvent ...*corev1.Event) {
-	message := fmt.Sprintf("%d,%s: %s event: %s", getMostRecentEventTimestamp(*newEvent).UnixMilli(), createEventKey(*newEvent), eventType, newEvent.Message[:min(30, len(newEvent.Message))])
+	message := fmt.Sprintf("%d,%s: %s event: %s", getMostRecentEventTimestamp(*newEvent).UnixMilli(), getGroupKey(*newEvent), eventType, newEvent.Message[:min(30, len(newEvent.Message))])
 	if len(oldEvent) > 0 {
 		message = fmt.Sprintf("%s -> %s", oldEvent[0].Message, newEvent.Message[:min(30, len(newEvent.Message))])
 	}
@@ -155,7 +168,7 @@ func groupEvents(events []interface{}) map[string][]corev1.Event {
 	for _, event := range events {
 		eventRef := event.(*corev1.Event)
 		if eventRef != nil {
-			groupKey := createEventKey(*eventRef)
+			groupKey := getGroupKey(*eventRef)
 			groups[groupKey] = append(groups[groupKey], *eventRef)
 		}
 	}
@@ -188,7 +201,7 @@ func sortingFunction(a, b corev1.Event) bool {
 }
 
 func processEvent(event corev1.Event) {
-	fmt.Printf("-- %d %s : %s\n", getMostRecentEventTimestamp(event).UnixMilli(), createEventKey(event), event.Message[:min(60, len(event.Message))])
+	fmt.Printf("-- %d %s : %s\n", getMostRecentEventTimestamp(event).UnixMilli(), getGroupKey(event), event.Message[:min(60, len(event.Message))])
 }
 
 func getMostRecentEventTimestamp(event corev1.Event) time.Time {
@@ -202,8 +215,11 @@ func getMostRecentEventTimestamp(event corev1.Event) time.Time {
 	return latest
 }
 
-func createEventKey(event corev1.Event) string {
+func getGroupKey(event corev1.Event) string {
 	return fmt.Sprintf("%s/%s/%s", event.InvolvedObject.Kind, event.InvolvedObject.Namespace, event.InvolvedObject.Name)
+}
+func getCacheKey(event corev1.Event) string {
+	return fmt.Sprintf("%s/%s/%s", "Event", event.Namespace, event.Name)
 }
 
 func min(a, b int) int {
