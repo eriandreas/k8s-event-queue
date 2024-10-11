@@ -33,8 +33,8 @@ func GetEvent(key string) (*corev1.Event, error) {
 	defer mu.RUnlock()
 
 	// Retrieve the compressed data from the cache
-	compressedData, ok := cache[key]
-	if !ok {
+	compressedData, exists := cache[key]
+	if !exists {
 		return nil, errors.New("key not found")
 	}
 
@@ -77,17 +77,23 @@ func RemoveEvent(key string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	_, exists := cache[key]
-	delete(cache, key)
+	compressedData, exists := cache[key]
 	if !exists {
 		return errors.New("key not found")
 	}
+	reduceCacheSize(int64(len(compressedData)))
+
+	delete(cache, key)
 
 	return nil
 }
 
 func updateCacheSize(size int64) {
 	atomic.AddInt64(&totalCacheSize, size)
+}
+
+func reduceCacheSize(size int64) {
+	atomic.AddInt64(&totalCacheSize, -size)
 }
 
 func getTotalCacheSize() int64 {
