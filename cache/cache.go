@@ -77,10 +77,12 @@ func RemoveEvent(key string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Remove the entry from the cache
+	_, exists := cache[key]
 	delete(cache, key)
+	if !exists {
+		return errors.New("key not found")
+	}
 
-	// No need to adjust totalCacheSize here since OnRemove will handle it
 	return nil
 }
 
@@ -102,6 +104,8 @@ func StartCacheMonitor(interval time.Duration) {
 }
 
 func printCacheStats() {
+	printFirstElement := false
+
 	cacheSize := getTotalCacheSize()
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
@@ -112,4 +116,31 @@ func printCacheStats() {
 	fmt.Printf("  Allocated Heap Objects: %d\n", memStats.HeapObjects)
 	fmt.Printf("  Total Allocated Memory: %d mb\n", memStats.Alloc/1024/1024)
 	fmt.Println("-------------------------------")
+
+	if !printFirstElement {
+		return
+	}
+
+	if len(cache) == 0 {
+		return
+	}
+
+	// Retrieve an arbitrary element
+	for k, _ := range cache {
+		event, err := GetEvent(k)
+		if err != nil {
+			return
+		}
+
+		prettyJSON, err := json.MarshalIndent(event, "", "    ")
+		if err != nil {
+			fmt.Println("Error generating JSON:", err)
+			return
+		}
+
+		fmt.Println("First Element in Cache:", k)
+		fmt.Println(string(prettyJSON))
+		break
+	}
+
 }

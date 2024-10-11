@@ -12,6 +12,7 @@ import (
 
 	rxgo "github.com/reactivex/rxgo/v2"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -21,6 +22,8 @@ import (
 	// call SetEvent from cache package, rename the packege to internal/cache
 	internalcache "eri.io/event-queue/cache"
 )
+
+var ignoredNamespaces = []string{"kube-system", "kube-public", "kube-node-lease"}
 
 func main() {
 	kubeconfig := getKubeConfigPath()
@@ -62,9 +65,9 @@ func setupInformer(clientset *kubernetes.Clientset, eventChan chan rxgo.Item) {
 	eventInformer := factory.Core().V1().Events().Informer()
 
 	eventInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { handleAddEvent(obj, eventChan) },
-		UpdateFunc: func(oldObj, newObj interface{}) { handleUpdateEvent(oldObj, newObj, eventChan) },
-		DeleteFunc: func(obj interface{}) { handleDeleteEvent(obj) },
+		AddFunc:    func(obj interface{}) { handleEventWrapper(handleAddEvent, obj, eventChan) },
+		UpdateFunc: func(oldObj, newObj interface{}) { handleEventWrapper(handleUpdateEvent, newObj, eventChan) },
+		DeleteFunc: func(obj interface{}) { handleEventWrapper(handleDeleteEvent, obj, eventChan) },
 	})
 
 	go eventInformer.Run(make(chan struct{}))
@@ -75,7 +78,14 @@ func setupInformer(clientset *kubernetes.Clientset, eventChan chan rxgo.Item) {
 	}
 }
 
-func handleDeleteEvent(obj interface{}) {
+func handleEventWrapper(handler func(obj interface{}, eventChan chan rxgo.Item), obj interface{}, eventChan chan rxgo.Item) {
+	if include(&obj.(*corev1.Event).ObjectMeta, ignoredNamespaces...) {
+		return
+	}
+	handler(obj, eventChan)
+}
+
+func handleDeleteEvent(obj interface{}, eventChan chan rxgo.Item) {
 	internalcache.RemoveEvent(getCacheKey(*obj.(*corev1.Event)))
 	printEventDetails("Del", obj.(*corev1.Event))
 }
@@ -86,11 +96,10 @@ func handleAddEvent(obj interface{}, eventChan chan rxgo.Item) {
 	printEventDetails("New", obj.(*corev1.Event))
 }
 
-func handleUpdateEvent(oldObj, newObj interface{}, eventChan chan rxgo.Item) {
+func handleUpdateEvent(newObj interface{}, eventChan chan rxgo.Item) {
 	internalcache.SetEvent(getCacheKey(*newObj.(*corev1.Event)), newObj.(*corev1.Event))
 	eventChan <- rxgo.Of(newObj)
-	printEventDetails("Upd", newObj.(*corev1.Event), oldObj.(*corev1.Event))
-
+	printEventDetails("Upd", newObj.(*corev1.Event))
 }
 
 func printEventDetails(eventType string, newEvent *corev1.Event, oldEvent ...*corev1.Event) {
@@ -227,4 +236,14 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func include(obj metav1.Object, included ...string) bool {
+	namespace := obj.GetNamespace()
+	for _, ns := range included {
+		if namespace == ns {
+			return true
+		}
+	}
+	return false
 }
